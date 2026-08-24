@@ -192,7 +192,13 @@ object SubtitleCharsetDetector {
                 lang.startsWith("czech") || lang.startsWith("hungarian") || lang.startsWith("romanian") ||
                 lang.startsWith("croatian") || lang.startsWith("slovak") || lang.startsWith("slovenian") -> CHARSET_WIN1250
             lang == "zho" || lang == "zh" || lang == "chi" || lang.startsWith("chinese") -> {
-                if (isCjkClean(bytes, offset, length, CHARSET_BIG5)) CHARSET_BIG5 else CHARSET_GB18030
+                if (normalized.contains("tw") || normalized.contains("hk") || normalized.contains("traditional") || normalized.contains("hant")) {
+                    CHARSET_BIG5
+                } else if (normalized.contains("cn") || normalized.contains("sg") || normalized.contains("simplified") || normalized.contains("hans")) {
+                    CHARSET_GB18030
+                } else {
+                    if (isCjkClean(bytes, offset, length, CHARSET_BIG5)) CHARSET_BIG5 else CHARSET_GB18030
+                }
             }
             lang == "jpn" || lang == "ja" || lang.startsWith("japanese") -> CHARSET_SHIFT_JIS
             lang == "kor" || lang == "ko" || lang.startsWith("korean") -> CHARSET_EUC_KR
@@ -267,14 +273,39 @@ object SubtitleCharsetDetector {
 
         if (nonAscii == 0) return StandardCharsets.UTF_8
 
-        // CJK detection
-        if (countBlockMatches(bytes, sampleOffset, sampleLength, CHARSET_SHIFT_JIS, Character.UnicodeBlock.HIRAGANA, Character.UnicodeBlock.KATAKANA) >= 3) {
+        // Japanese Shift_JIS check (Hiragana in 0x82 0x9F..0xF1)
+        var hiraganaCount = 0
+        var sjisIdx = sampleOffset
+        while (sjisIdx < end - 1) {
+            val b1 = bytes[sjisIdx].toInt() and 0xFF
+            val b2 = bytes[sjisIdx + 1].toInt() and 0xFF
+            if (b1 == 0x82 && b2 in 0x9F..0xF1) {
+                hiraganaCount++
+                sjisIdx++
+            }
+            sjisIdx++
+        }
+        if (hiraganaCount >= 2) {
             return CHARSET_SHIFT_JIS
         }
+
+        // Korean EUC-KR syllables check (Hangul block match)
         val hangulScore = countBlockMatches(bytes, sampleOffset, sampleLength, CHARSET_EUC_KR, Character.UnicodeBlock.HANGUL_SYLLABLES)
         val gbHanziScore = countBlockMatches(bytes, sampleOffset, sampleLength, CHARSET_GB18030, Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS)
 
-        if (hangulScore >= 4 && hangulScore >= gbHanziScore) return CHARSET_EUC_KR
+        if (hangulScore >= 4 && hangulScore >= gbHanziScore && maxConsecutiveNonAscii >= 4) {
+            return CHARSET_EUC_KR
+        }
+
+        // Thai single-byte consonants check (0xA1..0xBF)
+        var thaiConsonantsEarly = 0
+        for (i in sampleOffset until end) {
+            val b = bytes[i].toInt() and 0xFF
+            if (b in 0xA1..0xBF) thaiConsonantsEarly++
+        }
+        if (thaiConsonantsEarly * 4 >= nonAscii && thaiConsonantsEarly >= 4) {
+            return CHARSET_WIN874
+        }
 
         if (gbHanziScore >= 4 && maxConsecutiveNonAscii >= 6) {
             var big5TrailCount = 0
@@ -304,10 +335,11 @@ object SubtitleCharsetDetector {
                 val b = bytes[i].toInt() and 0xFF
                 if (b == 0xCC || b == 0xD2 || b == 0xF2 || b == 0xF5) vietnameseScore++
                 if (b == 0xF0 || b == 0xFE || b == 0xFD || b == 0xD0 || b == 0xDE || b == 0xDD) turkishScore++
-                if (b == 0xB9 || b == 0xB3 || b == 0x9C || b == 0x9F || b == 0x9A || b == 0x9E || b == 0x8C || b == 0x8F || b == 0x8A || b == 0x8E || b == 0x8D || b == 0x9D || b == 0xCF || b == 0xEF || b == 0xBE || b == 0xBA || b == 0xEC) ceScore++
+                // Only unambiguous Central European distinct characters (to avoid overlap with Italian/French accented letters)
+                if (b == 0xB9 || b == 0xB3 || b == 0x9C || b == 0x9F || b == 0x9A || b == 0x9E || b == 0x8C || b == 0x8F || b == 0x8A || b == 0x8E || b == 0x8D || b == 0x9D || b == 0xCF || b == 0xEF || b == 0xBE) ceScore++
             }
-            if (turkishScore > ceScore && turkishScore > 0) return CHARSET_WIN1254
-            if (ceScore > 0 && ceScore >= vietnameseScore) return CHARSET_WIN1250
+            if (turkishScore >= 2 && turkishScore > ceScore) return CHARSET_WIN1254
+            if (ceScore >= 2 && ceScore >= vietnameseScore) return CHARSET_WIN1250
             if (vietnameseScore >= 2) return CHARSET_WIN1258
             return CHARSET_WIN1252
         }
@@ -326,9 +358,9 @@ object SubtitleCharsetDetector {
             if (b in 0xA1..0xBF) thaiConsonants++
             if (b in 0xE0..0xFA) hebrewLetters++
             if (b in 0xC0..0xDF) bytes0xC0to0xDF++
-            if (b == 0xEE || b == 0xE0 || b == 0xE5 || b == 0xE8 || b == 0xFF || b == 0xFB) russianVowels++
+            if (b == 0xEE || b == 0xE0 || b == 0xE5 || b == 0xE8 || b == 0xFF || b == 0xFB || b == 0xF3 || b == 0xFD || b == 0xFE) russianVowels++
             if (b == 0xCF || b == 0xC1 || b == 0xC5 || b == 0xC9 || b == 0xD5 || b == 0xDF) koi8Vowels++
-            if (b == 0xE1 || b == 0xEF || b == 0xE5 || b == 0xE7 || b == 0xFD || b == 0xFE) greekVowels++
+            if (b == 0xE1 || b == 0xEF || b == 0xE5 || b == 0xE7 || b == 0xFD || b == 0xFE || b == 0xE9 || b == 0xF5 || b == 0xF9 || b == 0xDC || b == 0xDD || b == 0xDE || b == 0xDF || b == 0xFA || b == 0xFB || b == 0xFC) greekVowels++
             if (i < end - 1 && b == 0xC7 && (bytes[i + 1].toInt() and 0xFF) == 0xE1) arabicAlCount++
         }
 
@@ -337,7 +369,7 @@ object SubtitleCharsetDetector {
             return CHARSET_WIN1255
         }
 
-        // Thai check
+        // Thai check (0xA1..0xBF consonants)
         if (thaiConsonants * 4 >= nonAscii && thaiConsonants >= 4) {
             return CHARSET_WIN874
         }
@@ -351,16 +383,16 @@ object SubtitleCharsetDetector {
         if (koi8Vowels > russianVowels && koi8Vowels >= 3) {
             return CHARSET_KOI8_R
         }
-        if (russianVowels > greekVowels && russianVowels >= 4 && (russianVowels * 2 >= nonAscii)) {
+        if (russianVowels > greekVowels && russianVowels >= 4) {
             return CHARSET_WIN1251
         }
 
         // Greek check
-        if (greekVowels > russianVowels && greekVowels >= 4 && (greekVowels * 2 >= nonAscii)) {
+        if (greekVowels > russianVowels && greekVowels >= 4) {
             return CHARSET_WIN1253
         }
 
-        // Turkish / Central European / Vietnamese / Western European
+        // Turkish / Central European / Vietnamese / Western European fallback
         var turkishScore = 0
         var ceScore = 0
         var vietnameseScore = 0
@@ -368,7 +400,7 @@ object SubtitleCharsetDetector {
             val b = bytes[i].toInt() and 0xFF
             if (b == 0xCC || b == 0xD2 || b == 0xF2 || b == 0xF5) vietnameseScore++
             if (b == 0xF0 || b == 0xFE || b == 0xFD || b == 0xD0 || b == 0xDE || b == 0xDD) turkishScore++
-            if (b == 0xB9 || b == 0xB3 || b == 0x9C || b == 0x9F || b == 0x9A || b == 0x9E || b == 0x8C || b == 0x8F || b == 0x8A || b == 0x8E || b == 0x8D || b == 0x9D || b == 0xCF || b == 0xEF || b == 0xBE || b == 0xBA || b == 0xEC) ceScore++
+            if (b == 0xB9 || b == 0xB3 || b == 0x9C || b == 0x9F || b == 0x9A || b == 0x9E || b == 0x8C || b == 0x8F || b == 0x8A || b == 0x8E || b == 0x8D || b == 0x9D || b == 0xCF || b == 0xEF || b == 0xBE) ceScore++
         }
         if (turkishScore > ceScore && turkishScore > 0) return CHARSET_WIN1254
         if (ceScore > 0 && ceScore >= vietnameseScore) return CHARSET_WIN1250
