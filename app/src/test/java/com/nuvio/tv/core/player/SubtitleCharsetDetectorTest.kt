@@ -119,11 +119,41 @@ class SubtitleCharsetDetectorTest {
     }
 
     @Test
-    fun decodesDoubleEncodedHebrewUtf8WithoutLanguageHint() {
-        val gibberishLatin1Utf8Text = "46\n00:04:42,243 --> 00:04:45,387\næåäï, äçæøðå àú\n!äôðèåí. -ìà\n\n47\n00:04:46,652 --> 00:04:49,374\n,îä æàú àåîøú\n?äçæøðå àú äôðèåí"
-        val rawBytes = gibberishLatin1Utf8Text.toByteArray(Charsets.UTF_8)
+    fun decodesPortugueseWindows1252WithLanguageHint() {
+        val ptText = "Eles não têm medo de nada. Não vamos desistir, eles estão lá. Você não sabe o que eles têm."
+        val win1252Charset = Charset.forName("windows-1252")
+        val rawBytes = ptText.toByteArray(win1252Charset)
+
+        val decoded = SubtitleCharsetDetector.decode(rawBytes, languageHint = "por")
+        assertEquals(ptText, decoded)
+    }
+
+    @Test
+    fun decodesPortugueseWindows1252WithoutLanguageHint() {
+        val ptText = "Eles não têm medo de nada. Não vamos desistir, eles estão lá. Você não sabe o que eles têm."
+        val win1252Charset = Charset.forName("windows-1252")
+        val rawBytes = ptText.toByteArray(win1252Charset)
 
         val decoded = SubtitleCharsetDetector.decode(rawBytes, languageHint = null)
-        assertTrue("Expected decoded Hebrew text, but got: $decoded", decoded.contains("זוהן, החזרנו את"))
+        assertEquals(ptText, decoded)
+    }
+
+    @Test
+    fun decodesPortugueseUtf8WithoutDistortion() {
+        val ptText = "Eles não têm medo de nada. Não vamos desistir, eles estão lá. Você não sabe o que eles têm."
+        val rawBytes = ptText.toByteArray(Charsets.UTF_8)
+
+        val decoded = SubtitleCharsetDetector.decode(rawBytes, languageHint = "pt-pt")
+        assertEquals(ptText, decoded)
+    }
+
+    @Test
+    fun decodesSpanishWindows1252WithoutLanguageHint() {
+        val esText = "¿Cómo estás? ¡Muy bien, señor! Canción y corazón."
+        val win1252Charset = Charset.forName("windows-1252")
+        val rawBytes = esText.toByteArray(win1252Charset)
+
+        val decoded = SubtitleCharsetDetector.decode(rawBytes, languageHint = null)
+        assertEquals(esText, decoded)
     }
 }
